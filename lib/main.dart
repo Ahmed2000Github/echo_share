@@ -1,6 +1,9 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 
 setupMethodChannel() {
   const MethodChannel channel = MethodChannel('com.example.channel');
@@ -44,20 +47,26 @@ class ScreenRecorderPage extends StatefulWidget {
 }
 
 class _ScreenRecorderPageState extends State<ScreenRecorderPage> {
-  static const platform = MethodChannel('screen_record');
+  static const currentChannel = MethodChannel('screen_record');
 
   Future<void> startRecording() async {
+    setState(() {
+      _isrecording = true;
+    });
     await requestPermissions();
     try {
-      await platform.invokeMethod('startRecording');
+      await currentChannel.invokeMethod('startRecording');
     } on PlatformException catch (e) {
       print("Error starting recording: ${e.message}");
     }
   }
 
   Future<void> stopRecording() async {
+    setState(() {
+      _isrecording = false;
+    });
     try {
-      await platform.invokeMethod('stopRecording');
+      await currentChannel.invokeMethod('stopRecording');
     } on PlatformException catch (e) {
       print("Error stopping recording: ${e.message}");
     }
@@ -65,19 +74,31 @@ class _ScreenRecorderPageState extends State<ScreenRecorderPage> {
 
   static const platformChannel = const MethodChannel('test');
   Uint8List? _imageData;
+  WebSocketChannel? channel;
+  bool _isrecording = false;
+  ValueNotifier<Uint8List?> imageNotifier = ValueNotifier<Uint8List?>(null);
 
   @override
   void initState() {
     // TODO: implement initState
     super.initState();
-    platformChannel.setMethodCallHandler((call) async {
-      var data = call.arguments as Uint8List;
-      print("WWWWWWWWWWWWWWWWWWWWWWWWW: $data");
-      // Process frameBytes (e.g., convert to an image widget)
-      setState(() {
-        _imageData = data;
+    channel = WebSocketChannel.connect(
+        Uri.parse('ws://eeb8-105-67-131-103.ngrok-free.app/ws'));
+
+    if (Platform.isWindows) {
+      channel?.stream.listen((res) {
+        var data = res as Uint8List;
+        // print(":::::::::::::::::::::::::::::::::::");
+        imageNotifier.value = data;
       });
-    });
+    } else if (Platform.isAndroid) {
+      platformChannel.setMethodCallHandler((call) async {
+        var data = call.arguments as Uint8List;
+        if (channel != null && data.isNotEmpty) {
+          channel!.sink.add(data);
+        }
+      });
+    }
   }
 
   @override
@@ -86,32 +107,55 @@ class _ScreenRecorderPageState extends State<ScreenRecorderPage> {
       appBar: AppBar(title: Text("Screen Recorder")),
       body: Center(
         child: Column(
-          // mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            ElevatedButton(
-              onPressed: startRecording,
-              child: Text("Start Recording"),
+             ElevatedButton(
+              onPressed: (){
+                setState(() {
+                    channel = WebSocketChannel.connect(
+                      Uri.parse('ws://eeb8-105-67-131-103.ngrok-free.app/ws'));
+                });
+              },
+              child: Text("connect"),
             ),
-            SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: stopRecording,
-              child: Text("Stop Recording"),
-            ),
-            Expanded(
-              child: Container(
-                color: Colors.red,
-                child: _imageData != null
-                    ? Image.memory(
-                        _imageData!,
-                        fit: BoxFit.cover,
-                        // width: 800,
-                      )
-                    : Text("Waiting for image..."),
+            if (!_isrecording&& Platform.isAndroid)
+              ElevatedButton(
+                onPressed: startRecording,
+                child: Text("Start Recording"),
               ),
+            if (_isrecording && Platform.isAndroid)
+              ElevatedButton(
+                onPressed: stopRecording,
+                child: Text("Stop Recording"),
+              ),
+          
+               if (Platform.isWindows) Expanded(
+              child: Container(
+                alignment: Alignment.center,
+              child: ValueListenableBuilder<Uint8List?>(
+                valueListenable: imageNotifier,
+                builder: (context, imageData, child) {
+                  if (imageData != null) {
+                    return Image.memory(
+                      imageData,
+                      fit: BoxFit.cover,
+                    );
+                  } else {
+                    return Text("Waiting for image...");
+                  }
+                },
+              ),
+            )
             )
           ],
         ),
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    channel?.sink.close();
+    super.dispose();
   }
 }
