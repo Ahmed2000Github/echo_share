@@ -2,6 +2,7 @@ package com.example.echo_share
 
 import android.app.*
 import android.content.Context
+import android.graphics.Color
 import android.content.Intent
 import android.hardware.display.DisplayManager
 import android.media.MediaRecorder
@@ -20,16 +21,22 @@ import android.media.ImageReader
 import android.graphics.PixelFormat
 import android.graphics.Bitmap
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.Looper
 import java.nio.ByteBuffer
 import java.io.ByteArrayOutputStream
 
+
 class ScreenRecordService : Service() {
 
+    private var width:Int = 1520
+    private var height:Int = 2080
     private var mediaProjection: MediaProjection? = null
     private lateinit var mediaRecorder: MediaRecorder
     private lateinit var mediaProjectionManager: MediaProjectionManager
      private var imageReader: ImageReader? = null
+    private var backgroundThread: HandlerThread? = null
+    private var backgroundHandler: Handler? = null
     val flutterEngine = MainActivity.flutterEngineInstance
 
     override fun onCreate() {
@@ -41,6 +48,8 @@ class ScreenRecordService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val resultCode = intent?.getIntExtra("resultCode", Activity.RESULT_CANCELED) ?: Activity.RESULT_CANCELED
         val data = intent?.getParcelableExtra<Intent>("data")
+         width = intent?.getIntExtra("width", 1520) ?: 1520
+        height = intent?.getIntExtra("height", 2080) ?: 2080
 
         if (resultCode == Activity.RESULT_OK && data != null) {
             mediaProjection = mediaProjectionManager.getMediaProjection(resultCode, data)
@@ -49,94 +58,85 @@ class ScreenRecordService : Service() {
 
         return START_STICKY
     }
-
+    
+    
     private fun startRecording() {
+         backgroundThread = HandlerThread("ImageProcessingThread")
+        backgroundThread?.start()
+        backgroundHandler = Handler(backgroundThread!!.looper)
+        val channel = MethodChannel(flutterEngine!!.dartExecutor.binaryMessenger, "screen_record")
+      imageReader = ImageReader.newInstance(height, width,  PixelFormat.RGBA_8888, 2)
+      val imageReaderSurface: Surface = imageReader!!.surface
 
-        // if (flutterEngine != null) {
-        //   println("QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ")
-
-        //         val channel = MethodChannel(flutterEngine!!.dartExecutor.binaryMessenger, "test")
-        //         channel.invokeMethod("yourMethod", "yourArguments")
-        //     } else {
-        //         println("EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE")
-        //     }
-      imageReader = ImageReader.newInstance(1280, 720,  PixelFormat.RGBA_8888, 2)
-        val filePath = "${getExternalFilesDir(Environment.DIRECTORY_MOVIES)}/screen_record.mp4"
-        
-        mediaRecorder = MediaRecorder().apply {
-            setAudioSource(MediaRecorder.AudioSource.MIC)
-            setVideoSource(MediaRecorder.VideoSource.SURFACE)
-            setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-            setOutputFile(filePath)
-            setVideoSize(1280, 720)
-            setVideoEncoder(MediaRecorder.VideoEncoder.H264)
-            setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-            setVideoFrameRate(30)
-            setVideoEncodingBitRate(8 * 1000 * 1000)
-            prepare()
-        }
-
-        val virtualDisplay = mediaProjection?.createVirtualDisplay(
-            "ScreenRecordService",
-            1280, 720, resources.displayMetrics.densityDpi,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            mediaRecorder.surface, null, null
-        )
- val imageReaderSurface: Surface = imageReader!!.surface
-
-        // Create another virtual display if needed to capture frames
         mediaProjection?.createVirtualDisplay(
             "FrameCaptureService",
-            1280, 720,
+            height, width,
             resources.displayMetrics.densityDpi,
             0,
             imageReaderSurface,
             null, null
         )
-        mediaRecorder.start()
-       imageReader?.setOnImageAvailableListener({ reader ->
-    try {
-        val image: Image? = reader.acquireLatestImage()
-        if (image != null) {
-           val bitmap = imageToBitmap(image) // Convert Image to Bitmap
-            val imageBytes = bitmapToByteArray(bitmap) // Convert Bitmap to ByteArray
-            
+        imageReader?.setOnImageAvailableListener({ reader ->
+            synchronized(lock) {
+            backgroundHandler?.post {
+                  var image: Image? = null
+                try {
+             image = reader.acquireLatestImage()
+            if (image != null) {
+               val bitmap = imageToBitmap(image) 
+            val imageBytes = bitmapToByteArray(bitmap)
             Handler(Looper.getMainLooper()).post {
-                if (flutterEngine != null) {
-                    val channel = MethodChannel(flutterEngine!!.dartExecutor.binaryMessenger, "test")
-                    channel.invokeMethod("yourMethod22", imageBytes) // Send ByteArray to Flutter
-                } else {
-                    println("EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE")
-                }
+              channel.invokeMethod("onImageReady", imageBytes) 
             }
-
-            // Clean up
             image.close()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            println("Error processing Image: ${e.message}")
+        }finally {
+            image?.close() // Ensure the image is closed
         }
-    } catch (e: Exception) {
-        e.printStackTrace()
-        println("Error in ImageReader: ${e.message}")
-    }
-}, null)
+            }
+        }
+        }, backgroundHandler)
+    
 
     }
 
-    private fun imageToBitmap(image: Image): Bitmap {
+ private fun imageToBitmap(image: Image): Bitmap {
     val planes = image.planes
     val buffer: ByteBuffer = planes[0].buffer
     val pixelStride = planes[0].pixelStride
     val rowStride = planes[0].rowStride
-    val rowPadding = rowStride - pixelStride * image.width
+    val width = image.width
+    val height = image.height
 
-    val bitmap = Bitmap.createBitmap(
-        image.width + rowPadding / pixelStride, image.height, Bitmap.Config.ARGB_8888
-    )
-    bitmap.copyPixelsFromBuffer(buffer)
+    // Create a Bitmap with the correct dimensions
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+
+    // Copy pixel data row by row, skipping the padding
+    val rowData = ByteArray(rowStride)
+    for (row in 0 until height) {
+        buffer.position(row * rowStride)
+        buffer.get(rowData, 0, rowStride)
+
+        // Copy each row's pixel data into the Bitmap
+        for (col in 0 until width) {
+            val pixel = rowData[col * pixelStride].toInt() and 0xFF // Red
+            val pixel1 = rowData[col * pixelStride + 1].toInt() and 0xFF // Green
+            val pixel2 = rowData[col * pixelStride + 2].toInt() and 0xFF // Blue
+            val pixel3 = rowData[col * pixelStride + 3].toInt() and 0xFF // Alpha
+
+            // Set the pixel in the Bitmap
+            bitmap.setPixel(col, row, Color.argb(pixel3, pixel, pixel1, pixel2))
+        }
+    }
+
     return bitmap
 }
 private fun bitmapToByteArray(bitmap: Bitmap): ByteArray {
     val stream = ByteArrayOutputStream()
-    bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream) // Convert to PNG
+    bitmap.compress(Bitmap.CompressFormat.JPEG, 100, stream) // Convert to PNG
     return stream.toByteArray()
 }
 
@@ -160,13 +160,21 @@ private fun bitmapToByteArray(bitmap: Bitmap): ByteArray {
     override fun onBind(intent: Intent?): IBinder? {
         return null
     }
-
+private val lock = Any()
     override fun onDestroy() {
         super.onDestroy()
-        mediaRecorder.stop()
-        mediaRecorder.release()
+         synchronized(lock) {
+         try {
         mediaProjection?.stop()
+    } catch (e: Exception) {
+        println("Error stopping media projection: ${e.message}")
+    } finally {
         stopForeground(true)
         imageReader?.close()
+        backgroundThread?.quitSafely()
+        backgroundThread = null
+        backgroundHandler = null
+    }
+    }
     }
 }
