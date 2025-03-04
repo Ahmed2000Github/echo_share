@@ -34,4 +34,18 @@ class ControlService : AccessibilityService() {
         builder.addStroke(GestureDescription.StrokeDescription(path, 0, 50))
         dispatchGesture(builder.build(), null, null)
     }
+        fun simulateSwipe(startX: Float, startY: Float, endX: Float, endY: Float, duration: Long) {
+        val builder = GestureDescription.Builder()
+        val path = Path()
+
+        // Define the swipe path
+        path.moveTo(startX, startY)
+        path.lineTo(endX, endY)
+
+        // Add the swipe gesture to the builder
+        builder.addStroke(GestureDescription.StrokeDescription(path, 0, duration))
+
+        // Dispatch the gesture
+        dispatchGesture(builder.build(), null, null)
+    }
 }

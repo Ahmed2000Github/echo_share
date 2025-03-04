@@ -14,8 +14,10 @@ class MainActivity : FlutterActivity() {
     private val CONTROLCHANNEL = "control_channel"
     private lateinit var mediaProjectionManager: MediaProjectionManager
     private val REQUEST_CODE = 1001
+    private val REQUEST_CODE_ACCESSIBILITY_SETTINGS = 1002
      private var width:Int = 1520
     private var height:Int = 2080
+    private var pendingResult: MethodChannel.Result? = null
 companion object {
         var flutterEngineInstance: FlutterEngine? = null
     } 
@@ -39,18 +41,41 @@ companion object {
         }
          MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CONTROLCHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
+                "checkAccessibilityService"->{
+                    val serviceName = "com.example.echo_share/com.example.echo_share.ControlService"
+                    result.success(isAccessibilityServiceEnabled(serviceName))
+                }
+                "openAccessibilitySettings"->{
+                     pendingResult = result
+                     openAccessibilitySettings() 
+                }
                 "simulateTap" -> {
                     val x = call.argument<Double>("x")?.toFloat() ?: 0f
                     val y = call.argument<Double>("y")?.toFloat() ?: 0f
-                    val serviceName = "com.example.echo_share/com.example.echo_share.ControlService"
-                     if (isAccessibilityServiceEnabled(serviceName)) {
-                        println("AccessibilityService is enabled")
-                        simulateTap(x, y)
-                        result.success("Perform tap")
+                    
+                     val service = ControlService.getInstance()
+                    if (service != null) {
+                         service.simulateTap(x, y)
+                        result.success(null)
                     } else {
-                        println("AccessibilityService is not enabled")
-                        openAccessibilitySettings() 
-                        result.success( "AccessibilityService is not enabled")
+                        result.success("ControlService is not running")
+                    }
+                }
+                 "simulateSwipe" -> {
+                    // Extract swipe data from the method call
+                    val startX = call.argument<Double>("startX")?.toFloat() ?: 0f
+                    val startY = call.argument<Double>("startY")?.toFloat() ?: 0f
+                    val endX = call.argument<Double>("endX")?.toFloat() ?: 0f
+                    val endY = call.argument<Double>("endY")?.toFloat() ?: 0f
+                    val duration = call.argument<Int>("duration")?.toLong() ?: 500L
+
+                    // Call the simulateSwipe method
+                    val service = ControlService.getInstance()
+                    if (service != null) {
+                        service.simulateSwipe(startX, startY, endX, endY, duration)
+                        result.success(null)
+                    } else {
+                        result.success("ControlService is not running")
                     }
                 }
                 else -> result.notImplemented()
@@ -58,14 +83,7 @@ companion object {
         }
     }
 
-    private fun simulateTap(x: Float, y: Float) {
-        val service = ControlService.getInstance()
-        if (service != null) {
-            service.simulateTap(x, y)
-        } else {
-            println("ControlService is not running")
-        }
-    }
+
     
 
      private fun isAccessibilityServiceEnabled(serviceName: String): Boolean {
@@ -74,7 +92,6 @@ companion object {
             contentResolver,
             Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
         )
-         println("Enabled AccessibilityServices: $enabledServices")
         return enabledServices?.contains(serviceName) ?: false
        
     }
@@ -82,14 +99,24 @@ companion object {
     private fun openAccessibilitySettings() {
            try {
         val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-        startActivity(intent)
+        startActivityForResult(intent, REQUEST_CODE_ACCESSIBILITY_SETTINGS)
+
          }
         catch(e:Exception) {
             println("Failed to start activity ... ")
         }
         
     }
-
+private fun checkAccessibilityServiceAndNotifyFlutter(result: MethodChannel.Result? = null) {
+        val serviceName = "com.example.echo_share/com.example.echo_share.ControlService"
+        if (isAccessibilityServiceEnabled(serviceName)) {
+            println("AccessibilityService is enabled")
+            result?.success(true) 
+        } else {
+            println("AccessibilityService is not enabled")
+            result?.success(false) 
+        }
+    }
 
 
     private fun startRecording() {
@@ -111,6 +138,9 @@ companion object {
             intent.putExtra("width", width) 
             intent.putExtra("height", height)
             startService(intent)
+        }else if (requestCode == REQUEST_CODE_ACCESSIBILITY_SETTINGS) {
+             checkAccessibilityServiceAndNotifyFlutter(pendingResult)
+            pendingResult = null
         }
     }
 }

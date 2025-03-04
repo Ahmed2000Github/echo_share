@@ -11,6 +11,9 @@ dependencies:
     sdk: flutter
   permission_handler: ^11.4.0
   web_socket_channel: ^3.0.2
+  flutter_svg: ^2.0.17
+  qr_flutter: ^4.1.0
+  mobile_scanner: ^6.0.6
   # flutter_webrtc: any
 
 dev_dependencies:
@@ -20,3 +23,10 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  assets:
+    - assets/images/
+  fonts:
+    - family: Itim
+      fonts:
+        - asset: assets/fonts/Itim-Regular.ttf
