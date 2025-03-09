@@ -4,6 +4,10 @@ import android.app.Activity
 import android.content.Intent
 import android.provider.Settings
 import android.net.Uri
+import android.os.Looper
+import android.os.Handler
+import android.app.PendingIntent
+import android.app.PendingIntent.CanceledException
 import android.media.projection.MediaProjectionManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -17,7 +21,8 @@ class MainActivity : FlutterActivity() {
     private val REQUEST_CODE_ACCESSIBILITY_SETTINGS = 1002
      private var width:Int = 1520
     private var height:Int = 2080
-    private var pendingResult: MethodChannel.Result? = null
+    private var pendingResultForRecord: MethodChannel.Result? = null
+    private var pendingResultForAccessibilityCheck: MethodChannel.Result? = null
 companion object {
         var flutterEngineInstance: FlutterEngine? = null
     } 
@@ -26,12 +31,13 @@ companion object {
         flutterEngineInstance = flutterEngine
         
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, RECORDCHANNEL).setMethodCallHandler { call, result ->
+            pendingResultForRecord = result
             if (call.method == "startRecording") {
                 val arguments = call.arguments as? Map<String, Any> 
                 this.width = arguments?.get("width") as? Int ?: 1520 
                 this.height = arguments?.get("height") as? Int ?: 2080
                 startRecording()
-                result.success("Started Recording")
+                
             } else if (call.method == "stopRecording") {
                 stopRecording()
                 result.success("Stopped Recording")
@@ -41,12 +47,16 @@ companion object {
         }
          MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CONTROLCHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
+                "moveToBackground" -> {
+                    moveToBackground()
+                    result.success(null)
+                }
                 "checkAccessibilityService"->{
                     val serviceName = "com.example.echo_share/com.example.echo_share.ControlService"
                     result.success(isAccessibilityServiceEnabled(serviceName))
                 }
                 "openAccessibilitySettings"->{
-                     pendingResult = result
+                     pendingResultForAccessibilityCheck = result
                      openAccessibilitySettings() 
                 }
                 "simulateTap" -> {
@@ -84,7 +94,28 @@ companion object {
     }
 
 
-    
+    fun moveToBackground() {
+        val intent = Intent(Intent.ACTION_MAIN)
+        intent.addCategory(Intent.CATEGORY_HOME)
+        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        startActivity(intent)
+    }
+    private fun bringAppToForeground() {
+      val intent = Intent(this, MainActivity::class.java).apply {
+    flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+    val pendingIntent = PendingIntent.getActivity(
+    this@MainActivity, 
+    0,
+    intent,
+    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+)
+try {
+        pendingIntent.send()  
+    } catch (e: CanceledException) {
+        e.printStackTrace()
+    }   
+}
+}
 
      private fun isAccessibilityServiceEnabled(serviceName: String): Boolean {
      
@@ -98,8 +129,11 @@ companion object {
 
     private fun openAccessibilitySettings() {
            try {
-        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            bringAppToForeground()
+             Handler(Looper.getMainLooper()).postDelayed({
+                val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
         startActivityForResult(intent, REQUEST_CODE_ACCESSIBILITY_SETTINGS)
+        }, 100)
 
          }
         catch(e:Exception) {
@@ -138,9 +172,14 @@ private fun checkAccessibilityServiceAndNotifyFlutter(result: MethodChannel.Resu
             intent.putExtra("width", width) 
             intent.putExtra("height", height)
             startService(intent)
-        }else if (requestCode == REQUEST_CODE_ACCESSIBILITY_SETTINGS) {
-             checkAccessibilityServiceAndNotifyFlutter(pendingResult)
-            pendingResult = null
+            pendingResultForRecord?.success("Started Recording")
+            pendingResultForRecord = null
+        }else if(requestCode == REQUEST_CODE && resultCode != Activity.RESULT_OK){
+            pendingResultForRecord?.success("Canceled")
+        }
+        else if (requestCode == REQUEST_CODE_ACCESSIBILITY_SETTINGS) {
+             checkAccessibilityServiceAndNotifyFlutter(pendingResultForAccessibilityCheck)
+            pendingResultForAccessibilityCheck = null
         }
     }
 }

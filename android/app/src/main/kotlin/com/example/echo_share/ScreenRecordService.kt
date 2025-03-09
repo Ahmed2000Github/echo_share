@@ -46,6 +46,13 @@ class ScreenRecordService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+         intent?.let {
+        if (it.action == "STOP_RECORDING") {
+            stopRecording()
+            val channel = MethodChannel(flutterEngine!!.dartExecutor.binaryMessenger, "control_channel")
+            channel.invokeMethod("onStopRecording",null) 
+        }
+    }
         val resultCode = intent?.getIntExtra("resultCode", Activity.RESULT_CANCELED) ?: Activity.RESULT_CANCELED
         val data = intent?.getParcelableExtra<Intent>("data")
          width = intent?.getIntExtra("width", 1520) ?: 1520
@@ -55,6 +62,7 @@ class ScreenRecordService : Service() {
             mediaProjection = mediaProjectionManager.getMediaProjection(resultCode, data)
             startRecording()
         }
+       
 
         return START_STICKY
     }
@@ -99,8 +107,6 @@ class ScreenRecordService : Service() {
             }
         }
         }, backgroundHandler)
-    
-
     }
 
  private fun imageToBitmap(image: Image): Bitmap {
@@ -147,14 +153,39 @@ private fun bitmapToByteArray(bitmap: Bitmap): ByteArray {
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
 
+        val stopIntent = Intent(this, ScreenRecordService::class.java).apply {
+            action = "STOP_RECORDING"
+        }
+        val intent = Intent(this, MainActivity::class.java).apply {
+    flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+}
+
+val pendingIntent = PendingIntent.getActivity(
+    this,
+    0,
+    intent,
+    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+)
+        
+        val stopPendingIntent = PendingIntent.getService(this, 0, stopIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+
         val notification = NotificationCompat.Builder(this, notificationChannelId)
             .setContentTitle("Screen Recording")
             .setContentText("Recording in progress...")
             .setSmallIcon(android.R.drawable.ic_media_play)
+            .addAction(android.R.drawable.ic_media_pause, "Stop", stopPendingIntent)
+            .setContentIntent(pendingIntent)
             .setOngoing(true)
             .build()
 
+            
+
         startForeground(1, notification)
+    }
+
+    private fun stopRecording() {
+    stopSelf()
+    stopForeground(true)
     }
 
     override fun onBind(intent: Intent?): IBinder? {

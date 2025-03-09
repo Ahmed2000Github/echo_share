@@ -1,10 +1,10 @@
-import 'package:echo_share/configs/app_colors.dart';
+import 'package:echo_share/configs/app_routes.dart';
 import 'package:echo_share/views/widgets/q_r_scanner_overlay.dart';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 class QrCodePageMobile extends StatefulWidget {
-  QrCodePageMobile({super.key});
+  const QrCodePageMobile({super.key});
 
   @override
   State<QrCodePageMobile> createState() => _QrCodePageMobileState();
@@ -14,10 +14,16 @@ class _QrCodePageMobileState extends State<QrCodePageMobile> {
   late MobileScannerController cameraController;
 
   final ValueNotifier<bool> _torchState = ValueNotifier<bool>(false);
+  bool _codeDetected = false;
+
   @override
   void initState() {
     super.initState();
     cameraController = MobileScannerController();
+    // WidgetsBinding.instance.addPostFrameCallback((_) {
+    //   Navigator.pushNamed(context, AppRoutes.recordPage,
+    //                   arguments: "##@@##barcode.rawValue");
+    // });
   }
 
   Rect _getScanWindow(Size size) {
@@ -50,7 +56,11 @@ class _QrCodePageMobileState extends State<QrCodePageMobile> {
             onDetect: (capture) {
               final List<Barcode> barcodes = capture.barcodes;
               for (final barcode in barcodes) {
-                 print("EEEEEEEEEEEEEEEEE : ${barcode.rawValue}");
+                if (!_codeDetected) {
+                  _codeDetected = true;
+                  Navigator.pushNamed(context, AppRoutes.recordPage,
+                      arguments: barcode.rawValue);
+                }
               }
             },
           ),
@@ -58,15 +68,14 @@ class _QrCodePageMobileState extends State<QrCodePageMobile> {
           SafeArea(
             child: Row(
               children: [
-              
-                Spacer(),
+                const Spacer(),
                 IconButton(
                   icon: ValueListenableBuilder(
                     valueListenable: _torchState,
                     builder: (context, state, child) {
                       return !state
-                          ? Icon(Icons.flash_off, color: Colors.blueGrey)
-                          : Icon(Icons.flash_on, color: Colors.white);
+                          ? const Icon(Icons.flash_off, color: Colors.blueGrey)
+                          : const Icon(Icons.flash_on, color: Colors.white);
                     },
                   ),
                   onPressed: () async {
